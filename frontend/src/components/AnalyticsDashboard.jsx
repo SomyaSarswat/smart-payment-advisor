@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { fetchApi } from '../config/api';
 
 /**
  * AnalyticsDashboard component
@@ -13,25 +14,41 @@ export default function AnalyticsDashboard({ merchantId = 'college_fee_portal' }
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [lastFetchTime, setLastFetchTime] = useState(null);
+  const [nowTicker, setNowTicker] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTicker(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatLastUpdated = (fetchTime) => {
+    if (!fetchTime) return 'just now';
+    const diffSec = Math.max(0, Math.floor((nowTicker - fetchTime) / 1000));
+    if (diffSec === 0) return 'just now';
+    if (diffSec < 60) return `${diffSec}s ago`;
+    return `${Math.floor(diffSec / 60)}m ago`;
+  };
 
   const fetchAnalytics = (isInitial = false) => {
     if (isInitial) setLoading(true);
     else setRefreshing(true);
     setError(null);
 
-    fetch(`http://127.0.0.1:8080/api/analytics/${merchantId}`)
+    fetchApi(`/api/analytics/${merchantId}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Server returned status ${res.status}`);
         return res.json();
       })
       .then((analyticsData) => {
         setData(analyticsData);
+        setLastFetchTime(Date.now());
         setLoading(false);
         setRefreshing(false);
       })
       .catch((err) => {
         console.error('Analytics fetch error:', err);
-        setError('Unable to load analytics data');
+        setError(err.message || '⚠️ Cannot reach server — please check backend is running');
         setLoading(false);
         setRefreshing(false);
       });
@@ -39,7 +56,6 @@ export default function AnalyticsDashboard({ merchantId = 'college_fee_portal' }
 
   useEffect(() => {
     fetchAnalytics(true);
-    // Auto-refresh every 5 seconds for real-time monitoring
     const interval = setInterval(() => {
       fetchAnalytics(false);
     }, 5000);
@@ -58,14 +74,21 @@ export default function AnalyticsDashboard({ merchantId = 'college_fee_portal' }
             <span className="font-semibold text-blue-600">{merchantId}</span>
           </p>
         </div>
-        <button
-          onClick={() => fetchAnalytics(false)}
-          disabled={refreshing}
-          className="bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl border border-slate-300 transition cursor-pointer flex items-center gap-2 self-start sm:self-auto"
-        >
-          <span className={refreshing ? 'animate-spin' : ''}>🔄</span>
-          <span>{refreshing ? 'Refreshing...' : 'Refresh Data'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {lastFetchTime && (
+            <span className="text-xs text-slate-400 font-medium hidden sm:inline-block">
+              Updated {formatLastUpdated(lastFetchTime)}
+            </span>
+          )}
+          <button
+            onClick={() => fetchAnalytics(false)}
+            disabled={refreshing}
+            className="bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl border border-slate-300 transition cursor-pointer flex items-center gap-2 self-start sm:self-auto"
+          >
+            <span className={refreshing ? 'animate-spin' : ''}>🔄</span>
+            <span>{refreshing ? 'Refreshing...' : 'Refresh Data'}</span>
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -77,7 +100,7 @@ export default function AnalyticsDashboard({ merchantId = 'college_fee_portal' }
 
       {error && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-center">
-          <p className="text-rose-700 font-medium">{error}</p>
+          <p className="text-rose-700 font-medium text-sm">{error}</p>
         </div>
       )}
 
@@ -130,62 +153,101 @@ export default function AnalyticsDashboard({ merchantId = 'college_fee_portal' }
 
           {/* Recent Transaction Log Stream Table */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 text-lg">Live Transaction Log Stream</h3>
-              <span className="text-xs text-slate-500 font-medium">Showing last 20 records</span>
+            <div className="px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                  <span>Live Transaction Log Stream</span>
+                  <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                    Platform-wide Stream
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Showing last {data.recent_transactions.length} records • Updated {formatLastUpdated(lastFetchTime)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-semibold border border-emerald-200 self-start sm:self-auto">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Live Feed Active</span>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-700">
-                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-3">ID</th>
-                    <th className="px-6 py-3">Timestamp</th>
-                    <th className="px-6 py-3">Payment Method</th>
-                    <th className="px-6 py-3">Amount</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Error Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {data.recent_transactions.map((tx) => {
-                    const isSuccess = tx.status === 'success';
-                    const timeFormatted = new Date(tx.timestamp).toLocaleTimeString('en-IN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    });
-
-                    return (
-                      <tr key={tx.id} className="hover:bg-slate-50/80 transition">
-                        <td className="px-6 py-3.5 font-mono text-xs text-slate-500">#{tx.id}</td>
-                        <td className="px-6 py-3.5 text-xs text-slate-600 whitespace-nowrap">{timeFormatted}</td>
-                        <td className="px-6 py-3.5 font-medium text-slate-900">
-                          {tx.method} {tx.bank ? `(${tx.bank})` : ''}
-                        </td>
-                        <td className="px-6 py-3.5 font-semibold text-slate-800">
-                          ₹{Number(tx.amount).toLocaleString('en-IN')}
-                        </td>
-                        <td className="px-6 py-3.5 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                              isSuccess
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                : 'bg-rose-100 text-rose-800 border border-rose-200'
-                            }`}
-                          >
-                            {isSuccess ? '✓ SUCCESS' : '✕ FAILED'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3.5 text-xs text-slate-500 font-mono">
-                          {tx.error_code || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {/* Platform-wide Simulated Traffic Clarification Banner */}
+            <div className="bg-blue-50/80 border-b border-blue-100 px-6 py-2.5 text-xs text-blue-900 flex items-center gap-2">
+              <span className="text-sm">🌐</span>
+              <div>
+                <span className="font-bold">Platform-wide simulated traffic: </span>
+                <span className="text-blue-800">
+                  This log displays simulated system-wide transactions across all users & gateways (not limited to your individual payment).
+                </span>
+              </div>
             </div>
+
+
+            {data.recent_transactions.length === 0 ? (
+              /* Friendly Empty State Illustration for Zero Transactions */
+              <div className="p-12 text-center flex flex-col items-center justify-center space-y-3">
+                <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 text-3xl">
+                  💳
+                </div>
+                <h4 className="text-base font-bold text-slate-700">No Transactions Recorded Yet</h4>
+                <p className="text-xs text-slate-500 max-w-sm">
+                  There are no transactions in the database for merchant <span className="font-semibold">{merchantId}</span>. 
+                  Execute a payment from Checkout Portal or launch the background simulator to generate live feed records.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-700">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                    <tr>
+                      <th className="px-6 py-3">ID</th>
+                      <th className="px-6 py-3">Timestamp</th>
+                      <th className="px-6 py-3">Payment Method</th>
+                      <th className="px-6 py-3">Amount</th>
+                      <th className="px-6 py-3">Status</th>
+                      <th className="px-6 py-3">Error Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {data.recent_transactions.map((tx) => {
+                      const isSuccess = tx.status === 'success';
+                      const timeFormatted = new Date(tx.timestamp).toLocaleTimeString('en-IN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                      });
+
+                      return (
+                        <tr key={tx.id} className="hover:bg-slate-50/80 transition">
+                          <td className="px-6 py-3.5 font-mono text-xs text-slate-500">#{tx.id}</td>
+                          <td className="px-6 py-3.5 text-xs text-slate-600 whitespace-nowrap">{timeFormatted}</td>
+                          <td className="px-6 py-3.5 font-medium text-slate-900">
+                            {tx.method} {tx.bank ? `(${tx.bank})` : ''}
+                          </td>
+                          <td className="px-6 py-3.5 font-semibold text-slate-800">
+                            ₹{Number(tx.amount).toLocaleString('en-IN')}
+                          </td>
+                          <td className="px-6 py-3.5 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                isSuccess
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : 'bg-rose-100 text-rose-800 border border-rose-200'
+                              }`}
+                            >
+                              {isSuccess ? '✓ SUCCESS' : '✕ FAILED'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 text-xs text-slate-500 font-mono">
+                            {tx.error_code || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>
       )}

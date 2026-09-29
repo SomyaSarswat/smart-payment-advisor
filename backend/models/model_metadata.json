@@ -1,0 +1,28 @@
+{
+  "trained_at": "2026-09-29T12:58:35.126942",
+  "training_sample_count": 17154,
+  "train_sample_count": 13723,
+  "test_sample_count": 3431,
+  "success_count": 12890,
+  "failure_count": 4264,
+  "test_accuracy": 69.16,
+  "test_auc": 0.7184,
+  "failure_recall": 65.89,
+  "failure_precision": 42.29,
+  "failure_f1": 0.5151,
+  "success_recall": 70.25,
+  "success_precision": 86.16,
+  "success_f1": 0.7739,
+  "confusion_matrix": [
+    [
+      562,
+      291
+    ],
+    [
+      767,
+      1811
+    ]
+  ],
+  "model_type": "GradientBoostingClassifier",
+  "imbalance_correction": "Sample-Weighted Gradient Boosting (Balanced Class Weights)"
+}

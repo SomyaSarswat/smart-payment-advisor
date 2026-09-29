@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { fetchApi } from '../config/api';
 
 /**
  * SimulatorControl component
@@ -15,6 +16,10 @@ export default function SimulatorControl({ merchantId = 'college_fee_portal', on
   const [failureCount, setFailureCount] = useState(15);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
+
+  useEffect(() => {
+    setSelectedMerchant(merchantId);
+  }, [merchantId]);
 
   const paymentOptions = [
     { label: 'Net Banking - SBI', method: 'Net Banking', bank: 'SBI' },
@@ -40,9 +45,8 @@ export default function SimulatorControl({ merchantId = 'college_fee_portal', on
     };
 
     try {
-      const res = await fetch('http://127.0.0.1:8080/api/simulate-failure', {
+      const res = await fetchApi('/api/simulate-failure', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 

@@ -1,11 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import SmartAdvisorScreen from '../components/SmartAdvisorScreen';
+import { fetchApi } from '../config/api';
 
-/**
- * FeePaymentPage component
- * Mock merchant website for ABC College Fee Payment Portal.
- * Collects student & fee details before handing off to SmartAdvisorScreen AI recommender.
- */
+// Helper to dynamically guarantee Razorpay Checkout SDK is loaded on window
+const ensureRazorpaySdkLoaded = () => {
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    let script = document.querySelector('script[src*="checkout.razorpay.com"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      document.head.appendChild(script);
+    }
+    
+    let attempts = 0;
+    const checkInterval = setInterval(() => {
+      attempts++;
+      if (window.Razorpay) {
+        clearInterval(checkInterval);
+        resolve(true);
+      } else if (attempts > 30) {
+        clearInterval(checkInterval);
+        resolve(false);
+      }
+    }, 100);
+  });
+};
+
 export default function FeePaymentPage({ merchantId = 'college_fee_portal', refreshTrigger }) {
   const [studentName, setStudentName] = useState('Rahul Sharma');
   const [rollNumber, setRollNumber] = useState('CS2026-089');
@@ -19,6 +44,16 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
   const [processing, setProcessing] = useState(false);
   const [isSimulationMode, setIsSimulationMode] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState(null); // { type: 'success' | 'error' | 'warning' | 'info', message: string }
+  const paymentTimeoutRef = useRef(null);
+
+  // Clear safeguard timer on unmount
+  useEffect(() => {
+    return () => {
+      if (paymentTimeoutRef.current) {
+        clearTimeout(paymentTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -27,14 +62,14 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
     setIsSimulationMode(false);
   };
 
-  const handleMethodSelected = (method, bank) => {
+  const handleMethodSelected = useCallback((method, bank) => {
     console.log('User selected payment method:', { method, bank, amount, studentName, rollNumber });
     setSelectedMethod({ method, bank });
     setPaymentStatus({
       type: 'info',
       message: `Selected ${bank ? `${method} (${bank})` : method}. Click 'Proceed to Pay' to execute transaction.`
     });
-  };
+  }, [amount, studentName, rollNumber]);
 
   const handleProceedPayment = async () => {
     if (!selectedMethod) return;
@@ -42,11 +77,23 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
     setProcessing(true);
     setPaymentStatus({ type: 'info', message: 'Connecting to server & creating order...' });
 
+    // 30-Second Timeout Safeguard: Prevent infinite "Processing Payment..." state
+    if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
+    paymentTimeoutRef.current = setTimeout(() => {
+      setProcessing(false);
+      setPaymentStatus({
+        type: 'error',
+        message: 'Payment timed out — please try again'
+      });
+    }, 30000);
+
     try {
-      // Step 1: Create Razorpay Order via backend API
-      const orderRes = await fetch('http://127.0.0.1:8080/api/create-order', {
+      // Step 1: Ensure Razorpay Checkout SDK is ready
+      const isSdkLoaded = await ensureRazorpaySdkLoaded();
+
+      // Step 2: Create Razorpay Order via backend API
+      const orderRes = await fetchApi('/api/create-order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount: Number(amount),
           receipt_id: `rcpt_${Date.now()}`
@@ -61,13 +108,13 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
       const orderData = await orderRes.json();
       console.log('Razorpay Order Response:', orderData);
 
-      // Step 2: Handle missing keys vs real configured keys
+      // Step 3: Handle missing keys or offline fallback vs real configured keys
       if (orderData.simulation_mode) {
-        // Missing keys in .env: Activate Simulation Mode & display persistent warning badge
+        // Missing keys in .env or Razorpay unreachable: Activate Simulation Mode & display warning badge
         setIsSimulationMode(true);
         setPaymentStatus({
           type: 'warning',
-          message: '🧪 Simulation Mode — Test keys not configured in backend/.env. Recording mock transaction in database...'
+          message: `🧪 Simulation Mode Active — ${orderData.simulation_reason || 'Test keys not configured or network unreachable'}. Recording mock transaction in database...`
         });
 
         await verifyPayment({
@@ -75,21 +122,37 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
           razorpay_payment_id: `pay_sim_${Date.now()}`,
           razorpay_signature: 'simulated_signature'
         }, true);
-      } else if (window.Razorpay && orderData.key_id) {
-        // Real keys configured in .env: Launch real Razorpay Checkout Widget
+      } else if (isSdkLoaded && window.Razorpay && orderData.key_id) {
+        // Real keys configured in .env & SDK loaded: Launch real Razorpay Checkout Widget
         setIsSimulationMode(false);
         setPaymentStatus({
           type: 'info',
           message: '💳 Opening Razorpay Checkout Widget...'
         });
+
         const options = {
           key: orderData.key_id,
           amount: orderData.amount,
           currency: orderData.currency,
-          name: 'Merchant Payment Portal',
-          description: `Fee Payment for ${studentName}`,
+          name: merchantId === 'college_fee_portal'
+            ? 'ABC College Fee Portal'
+            : merchantId === 'ecommerce_store'
+            ? 'E-Commerce Store'
+            : 'Electricity Bill Portal',
+          description: `Payment for ${studentName} (${selectedMethod.bank ? `${selectedMethod.method} - ${selectedMethod.bank}` : selectedMethod.method})`,
           order_id: orderData.order_id,
+          modal: {
+            ondismiss: function () {
+              if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
+              setProcessing(false);
+              setPaymentStatus({
+                type: 'warning',
+                message: 'Payment cancelled: Checkout widget closed by user.'
+              });
+            }
+          },
           handler: async function (response) {
+            if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
             await verifyPayment({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
@@ -98,14 +161,17 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
           },
           prefill: {
             name: studentName,
-            email: 'student@merchant.edu.in'
+            email: 'student@merchant.edu.in',
+            contact: '9999999999'
           },
           theme: {
             color: '#2563eb'
           }
         };
+
         const rzp = new window.Razorpay(options);
         rzp.on('payment.failed', function (response) {
+          if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
           setPaymentStatus({
             type: 'error',
             message: `Razorpay Payment Failed: ${response.error.description || 'Transaction declined'}`
@@ -114,9 +180,21 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
         });
         rzp.open();
       } else {
-        throw new Error('Razorpay SDK script not loaded or Key ID missing.');
+        // Razorpay SDK script could not be loaded (e.g. offline network): fall back to simulation verification
+        console.warn('Razorpay SDK script not available on window. Falling back to Simulation Mode.');
+        setIsSimulationMode(true);
+        setPaymentStatus({
+          type: 'warning',
+          message: '🧪 Simulation Mode — Razorpay Checkout SDK script not loaded (offline network). Recording mock transaction in database...'
+        });
+        await verifyPayment({
+          razorpay_order_id: orderData.order_id || `order_sim_${Date.now()}`,
+          razorpay_payment_id: `pay_sim_${Date.now()}`,
+          razorpay_signature: 'simulated_signature'
+        }, true);
       }
     } catch (err) {
+      if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
       console.error('Payment initiation error:', err);
       setPaymentStatus({
         type: 'error',
@@ -128,9 +206,8 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
 
   const verifyPayment = async (payload, isSim = false) => {
     try {
-      const verifyRes = await fetch('http://127.0.0.1:8080/api/verify-payment', {
+      const verifyRes = await fetchApi('/api/verify-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...payload,
           merchant_id: merchantId,
@@ -143,11 +220,26 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
       });
 
       const verifyData = await verifyRes.json();
+      
+      // Track user's transaction ID locally for feed highlighting/pinning
+      if (verifyData.transaction_id) {
+        try {
+          const existing = JSON.parse(localStorage.getItem('user_payment_ids') || '[]');
+          if (!existing.includes(verifyData.transaction_id)) {
+            existing.push(verifyData.transaction_id);
+            localStorage.setItem('user_payment_ids', JSON.stringify(existing));
+          }
+          window.dispatchEvent(new CustomEvent('user_payment_completed', { detail: verifyData.transaction_id }));
+        } catch (e) {
+          console.error('Failed to save user payment ID:', e);
+        }
+      }
+
       if (verifyData.verified) {
         if (isSim) {
           setPaymentStatus({
             type: 'warning',
-            message: '🧪 SIMULATION VERIFIED: Mock transaction recorded in database! (To test real Razorpay widget, add RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET in backend/.env)'
+            message: '🧪 SIMULATION VERIFIED: Mock payment transaction recorded in database! (Live payment routing & analytics feed updated)'
           });
         } else {
           setPaymentStatus({
@@ -168,6 +260,7 @@ export default function FeePaymentPage({ merchantId = 'college_fee_portal', refr
         message: `Verification Request Failed: ${err.message}`
       });
     } finally {
+      if (paymentTimeoutRef.current) clearTimeout(paymentTimeoutRef.current);
       setProcessing(false);
     }
   };
